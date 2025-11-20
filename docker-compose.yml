@@ -1,0 +1,14 @@
+version: '3.9'
+
+services:
+  ics-fixer:
+    image: ghcr.io/wolffre/ics-fixer:latest
+    container_name: ics-fixer
+    restart: unless-stopped
+    environment:
+      ICS_URL: "https://dein-kalender-link.ics"         # 🔁 Hier deine ICS-Quelle eintragen
+      TZID: "Europe/Berlin"                             # 🔁 Zielzeitzone
+      HA_WWW_PATH: "/mnt/cache/appdata/homeassistant/www/kalender.ics"
+    volumes:
+      - /mnt/user/appdata/ics-fixer:/data
+      - /mnt/cache/appdata/homeassistant/www:/mnt/cache/appdata/homeassistant/www

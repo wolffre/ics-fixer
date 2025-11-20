@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ics-fixer</Name>
+  <Repository>ghcr.io/wolffre/ics-fixer:latest</Repository>
+  <Registry>https://github.com/wolffre/ics-fixer</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/wolffre/ics-fixer/issues</Support>
+  <Project/>
+  <Overview>ICS-Fixer f&#xFC;r Unraid: L&#xE4;dt alle 15 Minuten eine ICS-Datei, ersetzt UTC-Zeiten durch Europe/Berlin und speichert sie loka>
+  <Category>HomeAutomation:Calendar</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1763672449</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+ <Config Name="ICS URL" Target="ICS_URL" Default="https://outlook.office365.com/owa/calendar/DEIN_KALENDER_LINK/calendar.ics" Mode="text" Description="Pfad zur ICS-Datei (MS365 oder andere Quelle)" Type="Variable" Display="always" Required="true" Mask="false">https://deine-datei.de/calendar.ics</Config>
+  <Config Name="Path" Target="/data" Default="" Mode="rw" Description="" Type="Path" Display="always" Required="false" Mask="false">/mnt/cache/appdata/ics-fixer/</Config>
+  <Config Name="HA_WWW_PATH" Target="/data/ics-mod/" Default="/mnt/cache/appdata/homeassistant/www/ics-mod/" Mode="rw" Description="" Type="Path" Display="always" Required="false" Mask="false">/mnt/cache/appdata/homeassistant/www/ics-mod/</Config>
+  <Config Name="Zeitzone (TZID)" Target="TZID" Default="Europe/Berlin" Mode="text" Description="Zeitzone f&#xFC;r ICS-Konvertierung" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <TailscaleStateDir/>
+</Container>

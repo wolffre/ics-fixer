@@ -1,0 +1,1 @@
+*/15 * * * * /app/fetch_and_fix_ics.sh >> /dev/stdout 2>&1
