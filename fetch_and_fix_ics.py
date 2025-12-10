@@ -40,12 +40,10 @@ def convert_event_times(data: str) -> str:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M%S")
         except ValueError:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M")
-        # Wenn Original ein UTC-Zeitstempel war (endet mit Z), dann konvertieren
         if timestr.endswith("Z"):
             dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
             dt_local = dt_utc.astimezone(tz_target)
         else:
-            # Falls keine Z, nehmen wir an, dass es schon lokale Zeit ist
             dt_local = dt_utc.replace(tzinfo=tz_target)
         out = dt_local.strftime("%Y%m%dT%H%M%S")
         return f"{key};TZID={TZID}:{out}"
@@ -74,7 +72,7 @@ TZNAME:CET
 END:STANDARD
 END:VTIMEZONE
 """
-    return data.replace("BEGIN:VEVENT", vtz + "\nBEGIN:VEVENT", 1)
+    return data.replace("BEGIN:VEVENT", vtz + "\r\nBEGIN:VEVENT", 1)
 
 def main():
     if not ICS_URL:
@@ -90,12 +88,18 @@ def main():
     fixed = convert_event_times(raw)
     fixed = ensure_vtimezone(fixed)
 
-    # Header neu setzen
-    header = f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Unraid ICS Fixer//EN\n"
-    fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\n]*\n", "", fixed, flags=re.DOTALL)
+    # Header und Trailer sicherstellen
+    header = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ICS Fixer//EN\r\n"
+    if fixed.startswith("BEGIN:VCALENDAR"):
+        fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
     fixed = header + fixed
+    if not fixed.strip().endswith("END:VCALENDAR"):
+        fixed = fixed.strip() + "\r\nEND:VCALENDAR\r\n"
 
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+    # Zeilenenden normalisieren
+    fixed = fixed.replace("\n", "\r\n")
+
+    with open(OUTPUT_PATH, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(fixed)
 
     if os.path.getsize(OUTPUT_PATH) > 0:
