@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import requests
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,35 @@ def log(msg: str):
     except Exception:
         pass
 
+def clear_directories():
+    """Löscht .ics-Dateien immer, .log-Dateien nur wenn älter als 7 Tage."""
+    dirs_to_clear = [
+        os.path.dirname(LOG_PATH),
+        os.path.dirname(TMP_PATH),
+        os.path.dirname(OUTPUT_PATH),
+    ]
+    now = time.time()
+    max_age = 7 * 24 * 60 * 60  # 7 Tage in Sekunden
+
+    for d in dirs_to_clear:
+        if d and os.path.isdir(d):
+            log(f"Bereinige Verzeichnis: {d}")
+            for filename in os.listdir(d):
+                path = os.path.join(d, filename)
+                try:
+                    if filename.lower().endswith(".ics"):
+                        os.remove(path)
+                        log(f"ICS gelöscht: {path}")
+                    elif filename.lower().endswith(".log"):
+                        mtime = os.path.getmtime(path)
+                        if now - mtime > max_age:
+                            os.remove(path)
+                            log(f"Altes Log gelöscht: {path}")
+                        else:
+                            log(f"Log behalten (jünger als 7 Tage): {path}")
+                except Exception as e:
+                    log(f"Fehler beim Löschen {path}: {e}")
+
 def download_ics(url: str, target: str):
     log(f"Starte ICS-Download von {url}")
     resp = requests.get(url)
@@ -30,31 +60,54 @@ def download_ics(url: str, target: str):
         f.write(resp.text)
     log("ICS-Datei erfolgreich heruntergeladen")
 
+def normalize_tzid_strings(data: str) -> str:
+    return re.sub(r'TZID=W\. Europe Standard Time', f'TZID={TZID}', data)
+
 def convert_event_times(data: str) -> str:
     tz_target = ZoneInfo(TZID)
 
+    def rebuild_params(param_str: str) -> str:
+        if not param_str:
+            return f";TZID={TZID}"
+        parts = [p for p in param_str.split(";") if p]
+        parts = [p for p in parts if not p.upper().startswith("TZID=")]
+        parts.insert(0, f"TZID={TZID}")
+        return ";" + ";".join(parts)
+
     def repl(match):
-        key, tzid, timestr = match.groups()
-        timestr_noz = timestr.rstrip("Z")
-        try:
-            dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M%S")
-        except ValueError:
-            dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M")
+        key = match.group(1)
+        params = match.group(2) or ""
+        timestr = match.group(3)
 
-        if timestr.endswith("Z"):
-            # UTC → lokale Zeit
-            dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
-            dt_local = dt_utc.astimezone(tz_target)
+        if "VALUE=DATE" in params.upper():
+            clean_params = ";".join([p for p in params.split(";") if p and not p.upper().startswith("TZID=")])
+            if clean_params:
+                clean_params = ";" + clean_params
+            return f"{key}{clean_params}:{timestr}"
+
+        is_utc = timestr.endswith("Z")
+        timestr_noz = timestr[:-1] if is_utc else timestr
+
+        dt = None
+        for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M"):
+            try:
+                dt = datetime.strptime(timestr_noz, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return f"{key}{rebuild_params(params)}:{timestr}"
+
+        if is_utc:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz_target)
         else:
-            # schon lokale Zeit → nur TZID setzen
-            dt_local = dt_utc.replace(tzinfo=tz_target)
+            dt = dt.replace(tzinfo=tz_target)
 
-        out = dt_local.strftime("%Y%m%dT%H%M%S")
-        return f"{key};TZID={TZID}:{out}"
+        out = dt.strftime("%Y%m%dT%H%M%S")
+        return f"{key}{rebuild_params(params)}:{out}"
 
-    # Regex: fängt DTSTART/DTEND mit optionalem TZID ab
-    pattern = re.compile(r'^(DTSTART|DTEND)(?:;TZID=[^:]+)?:([0-9T]+Z?)$', re.MULTILINE)
-    return pattern.sub(lambda m: repl((m.group(1), m.group(2), m.group(2))), data)
+    pattern = re.compile(r'^(DTSTART|DTEND)(;[^:]*)?:([0-9T]+Z?)\s*$', re.MULTILINE)
+    return pattern.sub(repl, data)
 
 def ensure_vtimezone(data: str) -> str:
     if "BEGIN:VTIMEZONE" in data:
@@ -79,29 +132,31 @@ END:VTIMEZONE
 """
     return data.replace("BEGIN:VEVENT", vtz + "\r\nBEGIN:VEVENT", 1)
 
+def finalize_calendar(fixed: str) -> str:
+    fixed = re.sub(r"^BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
+    header = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ICS Fixer//EN\r\n"
+    fixed = header + fixed
+    if not fixed.strip().endswith("END:VCALENDAR"):
+        fixed = fixed.rstrip() + "\r\nEND:VCALENDAR\r\n"
+    fixed = fixed.replace("\r\n", "\n").replace("\n", "\r\n")
+    return fixed
+
 def main():
     if not ICS_URL:
         log("ICS_URL ist nicht gesetzt. Bitte als Umgebungsvariable übergeben.")
         sys.exit(1)
 
+    clear_directories()
     download_ics(ICS_URL, TMP_PATH)
 
     with open(TMP_PATH, "r", encoding="utf-8") as f:
         raw = f.read()
 
-    log(f"Beginne mit der Umwandlung der Zeitzonen mit TZID={TZID}")
-    fixed = convert_event_times(raw)
+    log(f"Beginne mit der Umwandlung und Normalisierung mit TZID={TZID}")
+    fixed = normalize_tzid_strings(raw)
+    fixed = convert_event_times(fixed)
     fixed = ensure_vtimezone(fixed)
-
-    # Header/Trailer sicherstellen
-    header = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ICS Fixer//EN\r\n"
-    fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
-    fixed = header + fixed
-    if not fixed.strip().endswith("END:VCALENDAR"):
-        fixed = fixed.strip() + "\r\nEND:VCALENDAR\r\n"
-
-    # Zeilenenden normalisieren
-    fixed = fixed.replace("\n", "\r\n")
+    fixed = finalize_calendar(fixed)
 
     with open(OUTPUT_PATH, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(fixed)
