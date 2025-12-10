@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo
 # Standardwerte
 ICS_URL = os.getenv("ICS_URL", "")
 TZID = os.getenv("TZID", "Europe/Berlin")
-LOG_PATH = os.getenv("LOG_PATH", "/data/ics-fixer.log")
+
+# Logdatei mit Datum versehen
+today = datetime.now().strftime("%Y-%m-%d")
+LOG_PATH = f"/data/ics-fixer-{today}.log"
+
 TMP_PATH = os.getenv("TMP_PATH", "/tmp/calendar_raw.ics")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "/data/ics-mod/kalender.ics")
 
@@ -110,8 +114,8 @@ def convert_event_times(data: str) -> str:
     return pattern.sub(repl, data)
 
 def ensure_vtimezone(data: str) -> str:
-    if "BEGIN:VTIMEZONE" in data:
-        return data
+    # Entferne alle vorhandenen VTIMEZONE-Blöcke
+    data = re.sub(r"BEGIN:VTIMEZONE.*?END:VTIMEZONE\r?\n", "", data, flags=re.DOTALL)
     vtz = f"""BEGIN:VTIMEZONE
 TZID:{TZID}
 BEGIN:DAYLIGHT
@@ -133,7 +137,10 @@ END:VTIMEZONE
     return data.replace("BEGIN:VEVENT", vtz + "\r\nBEGIN:VEVENT", 1)
 
 def finalize_calendar(fixed: str) -> str:
+    # Alten Header entfernen
     fixed = re.sub(r"^BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
+    # Doppelte VERSION entfernen
+    fixed = re.sub(r"^VERSION:.*\r?\n", "", fixed, flags=re.MULTILINE)
     header = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ICS Fixer//EN\r\n"
     fixed = header + fixed
     if not fixed.strip().endswith("END:VCALENDAR"):
