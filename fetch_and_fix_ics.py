@@ -34,22 +34,27 @@ def convert_event_times(data: str) -> str:
     tz_target = ZoneInfo(TZID)
 
     def repl(match):
-        key, timestr = match.groups()
+        key, tzid, timestr = match.groups()
         timestr_noz = timestr.rstrip("Z")
         try:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M%S")
         except ValueError:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M")
+
         if timestr.endswith("Z"):
+            # UTC → lokale Zeit
             dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
             dt_local = dt_utc.astimezone(tz_target)
         else:
+            # schon lokale Zeit → nur TZID setzen
             dt_local = dt_utc.replace(tzinfo=tz_target)
+
         out = dt_local.strftime("%Y%m%dT%H%M%S")
         return f"{key};TZID={TZID}:{out}"
 
-    pattern = re.compile(r'^(DTSTART|DTEND):([0-9T]+Z?)\s*$', re.MULTILINE)
-    return pattern.sub(repl, data)
+    # Regex: fängt DTSTART/DTEND mit optionalem TZID ab
+    pattern = re.compile(r'^(DTSTART|DTEND)(?:;TZID=[^:]+)?:([0-9T]+Z?)$', re.MULTILINE)
+    return pattern.sub(lambda m: repl((m.group(1), m.group(2), m.group(2))), data)
 
 def ensure_vtimezone(data: str) -> str:
     if "BEGIN:VTIMEZONE" in data:
@@ -88,10 +93,9 @@ def main():
     fixed = convert_event_times(raw)
     fixed = ensure_vtimezone(fixed)
 
-    # Header und Trailer sicherstellen
+    # Header/Trailer sicherstellen
     header = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ICS Fixer//EN\r\n"
-    if fixed.startswith("BEGIN:VCALENDAR"):
-        fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
+    fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\r\n]*\r?\n", "", fixed, flags=re.DOTALL)
     fixed = header + fixed
     if not fixed.strip().endswith("END:VCALENDAR"):
         fixed = fixed.strip() + "\r\nEND:VCALENDAR\r\n"
