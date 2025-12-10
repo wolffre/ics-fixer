@@ -30,11 +30,7 @@ def download_ics(url: str, target: str):
         f.write(resp.text)
     log("ICS-Datei erfolgreich heruntergeladen")
 
-def normalize_tzid(data: str) -> str:
-    # Ersetze Windows TZID durch Europe/Berlin
-    return re.sub(r'TZID=[^:]+', f'TZID={TZID}', data)
-
-def convert_utc_lines(data: str) -> str:
+def convert_event_times(data: str) -> str:
     tz_target = ZoneInfo(TZID)
 
     def repl(match):
@@ -44,12 +40,17 @@ def convert_utc_lines(data: str) -> str:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M%S")
         except ValueError:
             dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M")
-        dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
-        dt_local = dt_utc.astimezone(tz_target)
+        # Wenn Original ein UTC-Zeitstempel war (endet mit Z), dann konvertieren
+        if timestr.endswith("Z"):
+            dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+            dt_local = dt_utc.astimezone(tz_target)
+        else:
+            # Falls keine Z, nehmen wir an, dass es schon lokale Zeit ist
+            dt_local = dt_utc.replace(tzinfo=tz_target)
         out = dt_local.strftime("%Y%m%dT%H%M%S")
         return f"{key};TZID={TZID}:{out}"
 
-    pattern = re.compile(r'^(DTSTART|DTEND):([0-9T]+Z)\s*$', re.MULTILINE)
+    pattern = re.compile(r'^(DTSTART|DTEND):([0-9T]+Z?)\s*$', re.MULTILINE)
     return pattern.sub(repl, data)
 
 def ensure_vtimezone(data: str) -> str:
@@ -73,7 +74,6 @@ TZNAME:CET
 END:STANDARD
 END:VTIMEZONE
 """
-    # Füge Block direkt nach BEGIN:VCALENDAR ein
     return data.replace("BEGIN:VEVENT", vtz + "\nBEGIN:VEVENT", 1)
 
 def main():
@@ -81,27 +81,20 @@ def main():
         log("ICS_URL ist nicht gesetzt. Bitte als Umgebungsvariable übergeben.")
         sys.exit(1)
 
-    # Download
     download_ics(ICS_URL, TMP_PATH)
 
-    # Lesen
     with open(TMP_PATH, "r", encoding="utf-8") as f:
         raw = f.read()
 
     log(f"Beginne mit der Umwandlung der Zeitzonen mit TZID={TZID}")
-
-    # Verarbeitung
-    fixed = normalize_tzid(raw)
-    fixed = convert_utc_lines(fixed)
+    fixed = convert_event_times(raw)
     fixed = ensure_vtimezone(fixed)
 
-    # Header neu setzen (BEGIN:VCALENDAR, VERSION, PRODID)
+    # Header neu setzen
     header = f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Unraid ICS Fixer//EN\n"
-    # Entferne alte Header falls vorhanden
     fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\n]*\n", "", fixed, flags=re.DOTALL)
     fixed = header + fixed
 
-    # Schreiben
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(fixed)
 
