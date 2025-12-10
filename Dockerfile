@@ -1,22 +1,13 @@
-# Basis-Image mit Bash und curl
-FROM alpine:latest
+FROM python:3.11-slim
 
-# Installiere benötigte Tools
-RUN apk add --no-cache bash curl sed
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
+    rm -rf /var/lib/apt/lists/*
 
-# Arbeitsverzeichnis
 WORKDIR /app
+COPY fetch_and_fix_ics.py .
 
-# Kopiere das Bash-Skript ins Image
-COPY fetch_and_fix_ics.sh .
-
-# Setze Ausführungsrechte
-RUN chmod +x fetch_and_fix_ics.sh
-
-# Standard-Umgebungsvariablen (optional überschreibbar)
-ENV TZID="Europe/Berlin"
 ENV ICS_URL=""
 ENV HA_WWW_PATH="/mnt/cache/appdata/homeassistant/www/kalender.ics"
+ENV TZID="Europe/Berlin"
 
-# Entry Point
-CMD ["/bin/bash", "/app/fetch_and_fix_ics.sh"]
+CMD ["python", "/app/fetch_and_fix_ics.py"]

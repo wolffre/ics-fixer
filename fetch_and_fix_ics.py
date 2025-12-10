@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+import os
+import re
+import sys
+import requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Standardwerte
+ICS_URL = os.getenv("ICS_URL", "")
+TZID = os.getenv("TZID", "Europe/Berlin")
+LOG_PATH = os.getenv("LOG_PATH", "/data/ics-fixer.log")
+TMP_PATH = os.getenv("TMP_PATH", "/tmp/calendar_raw.ics")
+OUTPUT_PATH = os.getenv("OUTPUT_PATH", "/data/ics-mod/kalender.ics")
+
+def log(msg: str):
+    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    print(line)
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+def download_ics(url: str, target: str):
+    log(f"Starte ICS-Download von {url}")
+    resp = requests.get(url)
+    resp.raise_for_status()
+    with open(target, "w", encoding="utf-8") as f:
+        f.write(resp.text)
+    log("ICS-Datei erfolgreich heruntergeladen")
+
+def normalize_tzid(data: str) -> str:
+    # Ersetze Windows TZID durch Europe/Berlin
+    return re.sub(r'TZID=[^:]+', f'TZID={TZID}', data)
+
+def convert_utc_lines(data: str) -> str:
+    tz_target = ZoneInfo(TZID)
+
+    def repl(match):
+        key, timestr = match.groups()
+        timestr_noz = timestr.rstrip("Z")
+        try:
+            dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M%S")
+        except ValueError:
+            dt_utc = datetime.strptime(timestr_noz, "%Y%m%dT%H%M")
+        dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+        dt_local = dt_utc.astimezone(tz_target)
+        out = dt_local.strftime("%Y%m%dT%H%M%S")
+        return f"{key};TZID={TZID}:{out}"
+
+    pattern = re.compile(r'^(DTSTART|DTEND):([0-9T]+Z)\s*$', re.MULTILINE)
+    return pattern.sub(repl, data)
+
+def ensure_vtimezone(data: str) -> str:
+    if "BEGIN:VTIMEZONE" in data:
+        return data
+    vtz = f"""BEGIN:VTIMEZONE
+TZID:{TZID}
+BEGIN:DAYLIGHT
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+DTSTART:19700329T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+TZNAME:CEST
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+DTSTART:19701025T030000
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+TZNAME:CET
+END:STANDARD
+END:VTIMEZONE
+"""
+    # Füge Block direkt nach BEGIN:VCALENDAR ein
+    return data.replace("BEGIN:VEVENT", vtz + "\nBEGIN:VEVENT", 1)
+
+def main():
+    if not ICS_URL:
+        log("ICS_URL ist nicht gesetzt. Bitte als Umgebungsvariable übergeben.")
+        sys.exit(1)
+
+    # Download
+    download_ics(ICS_URL, TMP_PATH)
+
+    # Lesen
+    with open(TMP_PATH, "r", encoding="utf-8") as f:
+        raw = f.read()
+
+    log(f"Beginne mit der Umwandlung der Zeitzonen mit TZID={TZID}")
+
+    # Verarbeitung
+    fixed = normalize_tzid(raw)
+    fixed = convert_utc_lines(fixed)
+    fixed = ensure_vtimezone(fixed)
+
+    # Header neu setzen (BEGIN:VCALENDAR, VERSION, PRODID)
+    header = f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Unraid ICS Fixer//EN\n"
+    # Entferne alte Header falls vorhanden
+    fixed = re.sub(r"BEGIN:VCALENDAR.*?PRODID:[^\n]*\n", "", fixed, flags=re.DOTALL)
+    fixed = header + fixed
+
+    # Schreiben
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+        f.write(fixed)
+
+    if os.path.getsize(OUTPUT_PATH) > 0:
+        log(f"ICS-Datei erfolgreich geschrieben nach {OUTPUT_PATH}")
+    else:
+        log("ICS-Datei ist leer oder konnte nicht geschrieben werden")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
